@@ -7,7 +7,16 @@
 
 # Runtime dynamic sources (ShellCheck won't follow these, and that's OK)
 # shellcheck disable=SC1091
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+
+source "$SCRIPT_DIR/../config/config.sh"
+source "$SCRIPT_DIR/../lib/utils.sh"
 source "$SCRIPT_DIR/../config/config.sh"
 source "$SCRIPT_DIR/../lib/utils.sh"
 
