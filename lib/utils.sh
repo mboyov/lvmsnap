@@ -24,7 +24,7 @@ fi
 
 # Check if the logical volume exists
 if ! lvdisplay "/dev/$VG_NAME/$LV_NAME" >/dev/null 2>&1; then
-  echo "❌ Logical volume /dev/$VG_NAME/$LV_NAME not found."
+  echo "❌ Logical volume /dev/$VG_NAME/$LV_NAME not found. Try as root"
   exit 1
 fi
 
