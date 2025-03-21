@@ -49,10 +49,7 @@ list_snapshots() {
 
 # Check if a snapshot merge is currently in progress
 check_merge_in_progress() {
-  local attr
-  attr=$(lvs --noheadings -o lv_attr "/dev/$VG_NAME/$LV_NAME" | xargs)
-
-  if [[ "$attr" == *s* ]]; then
+  if dmsetup status | grep -E 'snapshot.*merging' >/dev/null; then
     echo "⚠️  A snapshot merge is currently in progress on $LV_NAME."
     echo "⏳ Please wait until the merge is completed (typically requires a reboot)."
     exit 1
