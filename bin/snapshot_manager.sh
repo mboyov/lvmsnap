@@ -248,6 +248,28 @@ while true; do
         continue
       fi
       echo "⚠️  Restoring manual backup from /dev/$backup_vg/$snap_to_restore to /dev/$SELECTED_VG/$SELECTED_LV."
+
+      # Check if the target LV is mounted (check both /dev and /dev/mapper paths)
+      if grep -qs "/dev/$SELECTED_VG/$SELECTED_LV" /proc/mounts || grep -qs "/dev/mapper/${SELECTED_VG}-${SELECTED_LV}" /proc/mounts; then
+        echo "WARNING: The target volume (/dev/$SELECTED_VG/$SELECTED_LV or /dev/mapper/${SELECTED_VG}-${SELECTED_LV}) is currently mounted."
+        read -rp "Do you want to unmount it? (yes/no): " unmount_confirm
+        if [[ "$unmount_confirm" == "yes" ]]; then
+          # Attempt to unmount both possible device paths and capture error messages
+          unmount_output1=$(umount "/dev/$SELECTED_VG/$SELECTED_LV" 2>&1)
+          unmount_output2=$(umount "/dev/mapper/${SELECTED_VG}-${SELECTED_LV}" 2>&1)
+          # Verify if unmount was successful
+          if grep -qs "/dev/$SELECTED_VG/$SELECTED_LV" /proc/mounts || grep -qs "/dev/mapper/${SELECTED_VG}-${SELECTED_LV}" /proc/mounts; then
+            echo "❌ Failed to unmount the target volume."
+            echo "Error details: $unmount_output1 $unmount_output2"
+            echo "Note: The target volume may be in use by Proxmox VE or other system processes. Please boot into rescue mode or use a live environment to perform the restoration."
+            continue
+          fi
+        else
+          echo "❎ Restoration aborted."
+          continue
+        fi
+      fi
+
       echo "This will completely overwrite /dev/$SELECTED_VG/$SELECTED_LV. A reboot might be required."
       read -rp "Are you sure? (yes/no): " confirm_backup
       if [[ "$confirm_backup" == "yes" ]]; then
