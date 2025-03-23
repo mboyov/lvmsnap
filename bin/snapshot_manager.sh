@@ -1,12 +1,10 @@
 #!/bin/bash
 
-# ------------------------------------------------------------------------------
-# Script Name   : snapshot_manager.sh
-# Description   : Interactive script to manage LVM snapshots (create, list, delete, restore)
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------
+# Refactored Script: snapshot_manager.sh (Dynamic Multi-Volume Support)
+# --------------------------------------------------------------------
 
-# Runtime dynamic sources (ShellCheck won't follow these, and that's OK)
-# shellcheck disable=SC1091
+# Load utilities
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -15,76 +13,107 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
-source "$SCRIPT_DIR/../config/config.sh"
-source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../config/config.sh"
 source "$SCRIPT_DIR/../lib/utils.sh"
 
-# Main interactive menu
-echo "=== LVM Snapshot Manager ==="
-echo "1) Create a snapshot"
-echo "2) List snapshots"
-echo "3) Delete one or more snapshots"
-echo "4) Restore a snapshot"
-echo "5) Exit"
-read -rp "Choice: " choice
+# Detect volumes dynamically into associative array
+declare -A VOLUMES
+while IFS='|' read -r vg lv; do
+  vg=$(echo "$vg" | xargs)
+  lv=$(echo "$lv" | xargs)
+  VOLUMES["$vg"]+="$lv "
+done < <(lvs --noheadings --separator '|' -o vg_name,lv_name)
 
-case "$choice" in
-
-1)
-  # Prevent creation if a merge is in progress
-  check_merge_in_progress
-
-  # Create a snapshot with timestamp
-  SNAP_NAME="${SNAP_PREFIX}_$(date +%F_%H%M%S)"
-  if lvcreate -L"$SNAP_SIZE" -s -n "$SNAP_NAME" "/dev/$VG_NAME/$LV_NAME"; then
-    echo "✅ Snapshot $SNAP_NAME created successfully."
-  else
-    echo "❌ Failed to create snapshot."
-  fi
-  ;;
-
-2)
-  list_snapshots
-  ;;
-
-3)
-  list_snapshots
-  echo ""
-  read -rp "Enter snapshot names to delete (space-separated): " snaps
-  for snap in $snaps; do
-    if lvremove -f "/dev/$VG_NAME/$snap"; then
-      echo "🗑️  Snapshot $snap deleted."
-    else
-      echo "⚠️  Failed to delete $snap."
-    fi
+# Prompt user to select a volume
+select_volume() {
+  echo -e "\n📦 Available Volumes:"
+  local i=1 choices=()
+  for vg in "${!VOLUMES[@]}"; do
+    for lv in ${VOLUMES[$vg]}; do
+      echo "$i) $vg/$lv"
+      choices+=("$vg|$lv")
+      ((i++))
+    done
   done
-  ;;
+  read -rp $'Choose a volume (number): ' selection
+  IFS='|' read -r SELECTED_VG SELECTED_LV <<<"${choices[$((selection - 1))]}"
+  SELECTED_VG=$(echo "$SELECTED_VG" | xargs)
+  SELECTED_LV=$(echo "$SELECTED_LV" | xargs)
+}
 
-4)
-  list_snapshots
-  echo ""
-  read -rp "Enter the snapshot name to restore: " snap_to_restore
-  echo "⚠️  Warning: Restoring will overwrite the current state of $LV_NAME."
-  read -rp "Are you sure you want to restore from $snap_to_restore? (yes/no): " confirm
-  if [[ "$confirm" == "yes" ]]; then
-    if lvconvert --merge "/dev/$VG_NAME/$snap_to_restore"; then
-      echo "✅ Snapshot $snap_to_restore will be restored after a reboot."
-      echo "🔁 Please reboot the system to complete the restoration."
-    else
-      echo "❌ Failed to restore snapshot $snap_to_restore."
+# Ask snapshot size (with default)
+ask_snapshot_size() {
+  read -rp "Enter snapshot size [default: 10G]: " SNAP_SIZE
+  SNAP_SIZE=${SNAP_SIZE:-10G}
+}
+
+# === Menu ===
+while true; do
+  echo -e "\n=== LVM Snapshot Manager ==="
+  echo "1) Create a snapshot"
+  echo "2) List snapshots"
+  echo "3) Delete one or more snapshots"
+  echo "4) Restore a snapshot"
+  echo "5) Exit"
+  read -rp "Choice: " choice
+
+  case "$choice" in
+  1)
+    select_volume
+
+    LV_PATH="/dev/$SELECTED_VG/$SELECTED_LV"
+    if [ ! -e "$LV_PATH" ]; then
+      echo "❌ Volume $LV_PATH not found. Please check LVM state."
+      continue
     fi
-  else
-    echo "❎ Operation cancelled."
-  fi
-  ;;
 
-5)
-  echo "👋 Exiting."
-  exit 0
-  ;;
-
-*)
-  echo "❌ Invalid choice."
-  ;;
-esac
+    check_merge_in_progress "$SELECTED_VG" "$SELECTED_LV"
+    ask_snapshot_size
+    SNAP_NAME="snap_${SELECTED_LV}_$(date +%F_%H%M%S)"
+    if lvcreate -L"$SNAP_SIZE" -s -n "$SNAP_NAME" "/dev/$SELECTED_VG/$SELECTED_LV"; then
+      echo "✅ Snapshot $SNAP_NAME created."
+    else
+      echo "❌ Failed to create snapshot."
+    fi
+    ;;
+  2)
+    list_snapshots
+    ;;
+  3)
+    list_snapshots
+    echo ""
+    read -rp "Enter snapshot names to delete (space-separated): " snaps
+    for snap in $snaps; do
+      for vg in "${!VOLUMES[@]}"; do
+        if lvremove -f "/dev/$vg/$snap" 2>/dev/null; then
+          echo "🗑️  Snapshot $snap deleted."
+          break
+        fi
+      done
+    done
+    ;;
+  4)
+    select_volume
+    list_snapshots "$SELECTED_VG" "$SELECTED_LV"
+    echo ""
+    read -rp "Enter the snapshot name to restore: " snap_to_restore
+    echo "⚠️  Restoring will overwrite $SELECTED_LV. Reboot required."
+    read -rp "Are you sure? (yes/no): " confirm
+    if [[ "$confirm" == "yes" ]]; then
+      if lvconvert --merge "/dev/$SELECTED_VG/$snap_to_restore"; then
+        echo "✅ Snapshot $snap_to_restore will be restored after reboot."
+      else
+        echo "❌ Restore failed."
+      fi
+    else
+      echo "❎ Cancelled."
+    fi
+    ;;
+  5)
+    echo "👋 Exiting."
+    exit 0
+    ;;
+  *)
+    echo "❌ Invalid choice."
+    ;;
+  esac
+done
