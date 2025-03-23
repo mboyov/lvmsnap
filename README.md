@@ -1,117 +1,111 @@
-# 🧪 LVM Snapshot Manager
+# 🧠 LVM Snapshot Manager
 
-Interactive Bash-based CLI tool to manage LVM snapshots: create, list, delete and restore.  
-Designed for Ubuntu 24.04+ and LVM-based systems.
+A shell-based tool to manage LVM snapshots and manual backups with ease and reliability. This project includes robust volume detection, flexible restoration logic, and quality-of-life improvements for system administrators and power users.
 
 ---
 
-## 📁 Project Structure
+## 🚀 Overview
 
-```
-lvm-snapshot-manager/
-├── bin/                   # Main CLI script
-├── lib/                   # Reusable shell functions (utils)
-├── config/                # Configuration file (VG/LV names, etc.)
-├── logs/                  # (Optional) Future logging output
-├── tests/                 # Snapshot creation test script
-├── docs/                  # Project documentation
-├── LICENSE                # To be filled
-├── Makefile               # Developer convenience commands
-└── README.md              # README
-```
+LVM Snapshot Manager provides a user-friendly CLI for creating, restoring, and managing LVM snapshots and manual backups. Key improvements include:
+
+- 🔄 **Dynamic Volume Reloading:** Ensures up-to-date logical volume list on each snapshot operation.
+- 🚫 **Volume Exclusion Filter:** Automatically hides `lvbackup_*` volumes from snapshot selection.
+- 🛠️ **VG-Aware Backup Restoration:** Accurately determines the correct Volume Group (VG) and uses `dd` for restoration.
+- 🧼 **Safe Restoration Checks:** Warns and provides detailed error output if the target volume cannot be unmounted.
+- 📋 **Improved Feedback:** Verbose output for error handling and recovery suggestions.
+
 ---
 
-## 🚀 Usage
+## ✨ Features
 
-Make sure `make` is installed, then run:
+- **Dynamic Volume Detection:** Detects and reloads available logical volumes automatically.
+- **Snapshot & Backup Management:** Create, list, delete, and restore both snapshots and manual backups.
+- **Manual Backup Restoration:** Allows restoring LVs using `dd` when space is unavailable in the original VG.
+- **Unmount Detection:** Checks `/dev/<VG>/<LV>` and `/dev/mapper/<VG>-<LV>` before attempting restoration.
+- **Test & Lint Suite:** Included `Makefile` allows quick testing and linting.
+
+---
+
+## 🛠️ Installation
+
+1. **Prerequisites:**
+- `lvm2`, `dd`, `bc`
+- (Optional) `pv` for progress display during data copying
+
+2. **Clone the repository:**
 
 ```bash
-make run
+git clone git@github.com:mboyov/lvmsnap.git
+cd lvmsnap
 ```
 
-Or run directly:
+---
+
+## 📦 Usage
+
+Run the Snapshot Manager with:
 
 ```bash
 bash bin/snapshot_manager.sh
 ```
 
----
+You will be presented with a menu:
 
-## 🧩 Features
+- Create a snapshot
+- List snapshots
+- Delete one or more snapshots
+- Restore a snapshot
+- Exit
 
-- ✅ Create LVM snapshots with timestamp
-- 🔍 List existing snapshots in table format
-- 🗑️ Delete one or multiple snapshots interactively
-- 🛠️ Restore from a snapshot (merge, reboot required)
-- ⚠️ Detects and blocks actions if a snapshot is currently merging
-- 🧪 Includes basic test for snapshot creation
-
----
-
-## ⚙️ Configuration
-
-Edit the `config/config.sh` file:
-
-```bash
-export VG_NAME="ubuntu-vg"
-export LV_NAME="ubuntu-lv"
-export SNAP_PREFIX="snap_ubuntu"
-export SNAP_SIZE="10G"
-```
+Follow the prompts to manage your LVM snapshots and manual backups.
 
 ---
 
-## 🧪 Tests
+## ♻️ Manual Backup Restoration
 
-Run snapshot creation test:
+When restoring a manual backup:
+
+- The script auto-detects the correct VG.
+- Checks if the target LV is mounted.
+- Prompts for unmount if needed.
+- If unmounting fails (e.g., due to Proxmox usage), displays full error context and suggests booting into rescue/live mode.
+
+---
+
+## ✅ Testing
+
+Run the test script:
 
 ```bash
 make test
 ```
 
-This test will:
-- Create a snapshot
-- Verify it's listed
-- Remove it after the test
+> Logs are saved in the `logs/` directory.
 
 ---
 
-## 🔍 Lint
+## 🧹 Linting & Cleaning
 
-Use ShellCheck to analyze all scripts:
+**Lint with ShellCheck:**
 
 ```bash
 make lint
 ```
 
-This skips SC1091 warnings due to dynamic `source` usage (intentional).
+**Remove logs:**
+
+```bash
+make clean
+```
 
 ---
 
-## 📦 Dependencies
+## 🤝 Contributing
 
-- `lvm2` (for LVM commands)
-- `make` (optional, for command shortcuts)
-- `shellcheck` (optional, for linting)
-- Bash 4+
-
----
-
-## 📝 Notes
-
-- Snapshot restore requires a system reboot.
-- You cannot create a new snapshot while a merge is in progress.
-- Tested on Ubuntu Server 24.04 with encrypted LVM setup.
-
----
-
-## ✍️ Author
-
-**mboyov**
+Contributions are welcome! Please open a pull request with detailed explanations.
 
 ---
 
 ## 📄 License
 
-To be completed in `LICENSE` file.
-
+Licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
