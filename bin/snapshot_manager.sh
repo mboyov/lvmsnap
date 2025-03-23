@@ -18,10 +18,12 @@ source "$SCRIPT_DIR/../lib/utils.sh"
 
 # Detect volumes dynamically into associative array
 declare -A VOLUMES
-volume_list=$(lvs --noheadings --separator '|' -o vg_name,lv_name)
-while IFS='|' read -r vg lv; do
+volume_list=$(lvs --noheadings --separator '|' -o vg_name,lv_name,origin)
+while IFS='|' read -r vg lv origin; do
   vg=$(echo "$vg" | xargs)
   lv=$(echo "$lv" | xargs)
+  origin=$(echo "$origin" | xargs)
+  [[ -n "$origin" ]] && continue # ⚠️ Skip if this LV is a snapshot
   VOLUMES["$vg"]+="$lv "
 done <<<"$volume_list"
 
@@ -58,11 +60,12 @@ display_snapshot_hints() {
   echo "📦 Available space in Volume Groups:"
   vgs --noheadings -o vg_name,vg_free --units g | column -t
   echo -e "\n💡 Recommended snapshot size: $recommended (10% of original volume)"
-  echo "ℹ️  Snapshot tracks only changed blocks. Heavy write activity increases usage."
+  echo -e "ℹ️  Snapshot tracks only changed blocks. Heavy write activity increases usage."
 }
 
 # Ask snapshot size
 ask_snapshot_size() {
+  echo ""
   read -rp "Enter snapshot size [default: $1]: " SNAP_SIZE
   SNAP_SIZE=${SNAP_SIZE:-$1}
 }

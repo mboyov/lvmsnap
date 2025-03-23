@@ -14,7 +14,11 @@ run:
 
 test:
 	@echo "🧪 Running tests..."
-	bash $(TEST_DIR)/snap_creation.sh
+	@mkdir -p logs
+	@echo "📄 Logging to logs/test.log"
+	@bash $(TEST_DIR)/snap_creation.sh > logs/test.log 2>&1 && \
+		echo "✅ Test completed successfully. See logs/test.log" || \
+		echo "❌ Test failed. Check logs/test.log for details."
 
 lint:
 	@echo "🔍 Running ShellCheck (ignoring SC1091)..."
