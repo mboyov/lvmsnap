@@ -1,5 +1,3 @@
-# Makefile for LVM Snapshot Manager (Refactored)
-
 BIN_DIR := bin
 LIB_DIR := lib
 TEST_DIR := tests

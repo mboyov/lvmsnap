@@ -4,13 +4,13 @@
 # Utility Functions for LVM Snapshot Manager (Dynamic Refactor)
 # --------------------------------------------------------------------
 
-# Check if LVM tools are available
+# Vérification de la présence des outils LVM
 if ! command -v lvs >/dev/null 2>&1; then
   echo "❌ LVM tools are not installed. Please install lvm2."
   exit 1
 fi
 
-# Function to list existing snapshots
+# Fonction pour lister les snapshots existants
 list_snapshots() {
   echo -e "\n📦 Available Snapshots:"
   printf "%-30s %-18s %-10s %-8s %-10s\n" "Snapshot Name" "Origin Volume" "Size" "Used%" "Attributes"
@@ -29,7 +29,7 @@ list_snapshots() {
   done
 }
 
-# Check if a snapshot merge is currently in progress for a specific VG/LV
+# Vérification de l'existence d'une fusion de snapshot en cours pour un VG/LV donné
 check_merge_in_progress() {
   local vg=$1
   local lv=$2

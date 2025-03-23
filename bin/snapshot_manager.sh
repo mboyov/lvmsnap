@@ -4,7 +4,7 @@
 # Refactored Script: snapshot_manager.sh (Dynamic Multi-Volume Support)
 # --------------------------------------------------------------------
 
-# Resolve script path safely
+# Résolution sécurisée du chemin du script
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -13,22 +13,59 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
+# Inclusion de la bibliothèque utilitaire
 # shellcheck source=../lib/utils.sh
 source "$SCRIPT_DIR/../lib/utils.sh"
 
-# Detect volumes dynamically into associative array
-declare -A VOLUMES
-volume_list=$(lvs --noheadings --separator '|' -o vg_name,lv_name,origin)
-while IFS='|' read -r vg lv origin; do
-  vg=$(echo "$vg" | xargs)
-  lv=$(echo "$lv" | xargs)
-  origin=$(echo "$origin" | xargs)
-  [[ -n "$origin" ]] && continue # Skip snapshots
-  VOLUMES["$vg"]+="$lv "
-done <<<"$volume_list"
+# Fonction pour lister les snapshots existants et les backups manuels
+list_snapshots() {
+  echo -e "\n📦 Available Snapshots:"
+  printf "%-30s %-18s %-10s %-8s %-10s\n" "Snapshot Name" "Origin Volume" "Size" "Used%" "Attributes"
+  echo "---------------------------------------------------------------------------------------------------------"
 
-# Prompt user to select a volume from non-snapshot LVs
+  lvs --noheadings --separator '|' -o lv_name,origin,lv_size,data_percent,lv_attr | while IFS='|' read -r name origin size used attr; do
+    name=$(echo "$name" | xargs)
+    origin=$(echo "$origin" | xargs)
+    size=$(echo "$size" | xargs)
+    used=$(echo "$used" | xargs)
+    attr=$(echo "$attr" | xargs)
+
+    if [[ -n "$origin" ]]; then
+      printf "%-30s %-18s %-10s %-8s %-10s\n" "$name" "$origin" "$size" "${used:-0.00}" "$attr"
+    fi
+  done
+
+  echo -e "\n🗃️  Available Manual Backups:"
+  printf "%-30s %-10s %-10s\n" "Backup Name" "VG" "Size"
+  echo "---------------------------------------------------------"
+  lvs --noheadings -o lv_name,vg_name,lv_size --units g | grep 'lvbackup_' | while read -r name vg size; do
+    name=$(echo "$name" | xargs)
+    vg=$(echo "$vg" | xargs)
+    size=$(echo "$size" | xargs)
+    printf "%-30s %-10s %-10s\n" "$name" "$vg" "$size"
+  done
+}
+
+# -----------------------------------------------------------------------------
+# Fonction select_volume() mise à jour pour :
+# - Recharger dynamiquement la liste des volumes à chaque appel
+# - Exclure les volumes de type lvbackup_*
+# -----------------------------------------------------------------------------
 select_volume() {
+  # Recharger dynamiquement la liste des volumes
+  declare -A VOLUMES
+  volume_list=$(lvs --noheadings --separator '|' -o vg_name,lv_name,origin)
+  while IFS='|' read -r vg lv origin; do
+    vg=$(echo "$vg" | xargs)
+    lv=$(echo "$lv" | xargs)
+    origin=$(echo "$origin" | xargs)
+    # Exclure les snapshots (ayant une origine) et les backups (lvbackup_*)
+    [[ -n "$origin" ]] && continue
+    [[ "$lv" == lvbackup_* ]] && continue
+    VOLUMES["$vg"]+="$lv "
+  done <<<"$volume_list"
+
+  # Affichage de la liste des volumes disponibles
   echo -e "\n📦 Available Volumes:"
   local i=1 choices=()
   for vg in "${!VOLUMES[@]}"; do
@@ -38,13 +75,20 @@ select_volume() {
       ((i++))
     done
   done
+
+  # Vérifier qu'au moins un volume est disponible
+  if [ ${#choices[@]} -eq 0 ]; then
+    echo "❌ Aucun volume disponible pour créer un snapshot."
+    exit 1
+  fi
+
   read -rp $'Choose a volume (number): ' selection
   IFS='|' read -r SELECTED_VG SELECTED_LV <<<"${choices[$((selection - 1))]}"
   SELECTED_VG=$(echo "$SELECTED_VG" | xargs)
   SELECTED_LV=$(echo "$SELECTED_LV" | xargs)
 }
 
-# Display snapshot hints
+# Affichage des indices pour la création d’un snapshot
 display_snapshot_hints() {
   local vg="$1"
   local lv="$2"
@@ -71,14 +115,13 @@ display_snapshot_hints() {
   echo -e "ℹ️  Snapshot tracks only changed blocks. Heavy write activity increases usage.\n"
 }
 
-# Ask snapshot size
 ask_snapshot_size() {
   echo ""
   read -rp "Enter snapshot size [default: $1]: " SNAP_SIZE
   SNAP_SIZE=${SNAP_SIZE:-$1}
 }
 
-# === Menu ===
+# === Menu principal ===
 while true; do
   echo -e "\n=== LVM Snapshot Manager ==="
   echo "1) Create a snapshot"
@@ -100,7 +143,7 @@ while true; do
     check_merge_in_progress "$SELECTED_VG" "$SELECTED_LV"
     display_snapshot_hints "$SELECTED_VG" "$SELECTED_LV"
 
-    # Check if the source VG has free space
+    # Vérifier l'espace libre dans le VG source
     VG_FREE=$(vgs --noheadings -o vg_free --units g "$SELECTED_VG" | xargs | sed 's/g//i')
     VG_FREE_INT=$(printf "%.0f" "$VG_FREE")
     if [[ "$VG_FREE_INT" -le 0 ]]; then
@@ -121,12 +164,12 @@ while true; do
         read -rp "Enter backup size [default: ${lv_size}G]: " BACKUP_SIZE
         BACKUP_SIZE=${BACKUP_SIZE:-${lv_size}G}
 
-        # Add unit G if missing
+        # Ajout de l'unité G si manquant
         if [[ ! "$BACKUP_SIZE" =~ [0-9]+G$ ]]; then
           BACKUP_SIZE="${BACKUP_SIZE}G"
         fi
 
-        # Validate backup size
+        # Validation de la taille du backup
         if [[ "$BACKUP_SIZE" < "$lv_size" ]]; then
           echo "❌ Backup size must be greater than or equal to the original volume size ($lv_size)."
           exit 1
@@ -165,14 +208,28 @@ while true; do
   3)
     list_snapshots
     echo ""
-    read -rp "Enter snapshot names to delete (space-separated): " snaps
+    read -rp "Enter snapshot or backup names to delete (space-separated): " snaps
     for snap in $snaps; do
-      for vg in "${!VOLUMES[@]}"; do
+      deleted=0
+      for vg in $(lvs --noheadings -o vg_name --select "lv_name=$snap" | xargs); do
         if lvremove -f "/dev/$vg/$snap" 2>/dev/null; then
-          echo "🗑️  Snapshot $snap deleted."
+          echo "🗑️  Snapshot $snap deleted from $vg."
+          deleted=1
           break
         fi
       done
+      if [[ $deleted -eq 0 ]]; then
+        vg_match=$(lvs --noheadings -o vg_name --select "lv_name=$snap" | xargs)
+        if [[ -n "$vg_match" ]]; then
+          if lvremove -f "/dev/$vg_match/$snap" 2>/dev/null; then
+            echo "🗑️  Manual backup $snap deleted from $vg_match."
+          else
+            echo "❌ Failed to delete $snap from $vg_match."
+          fi
+        else
+          echo "⚠️  Snapshot or backup $snap not found."
+        fi
+      fi
     done
     ;;
   4)
