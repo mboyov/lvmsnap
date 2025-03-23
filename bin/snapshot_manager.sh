@@ -4,7 +4,7 @@
 # Refactored Script: snapshot_manager.sh (Dynamic Multi-Volume Support)
 # --------------------------------------------------------------------
 
-# Load utilities
+# Runtime-safe sourcing
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -13,15 +13,17 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
+# shellcheck source=../lib/utils.sh
 source "$SCRIPT_DIR/../lib/utils.sh"
 
 # Detect volumes dynamically into associative array
 declare -A VOLUMES
+volume_list=$(lvs --noheadings --separator '|' -o vg_name,lv_name)
 while IFS='|' read -r vg lv; do
   vg=$(echo "$vg" | xargs)
   lv=$(echo "$lv" | xargs)
   VOLUMES["$vg"]+="$lv "
-done < <(lvs --noheadings --separator '|' -o vg_name,lv_name)
+done <<<"$volume_list"
 
 # Prompt user to select a volume
 select_volume() {
@@ -40,10 +42,29 @@ select_volume() {
   SELECTED_LV=$(echo "$SELECTED_LV" | xargs)
 }
 
-# Ask snapshot size (with default)
+# Display snapshot hints
+display_snapshot_hints() {
+  local vg="$1"
+  local lv="$2"
+  local lv_path="/dev/$vg/$lv"
+
+  lv_size_raw=$(lvs --noheadings -o lv_size --units g "$lv_path" | xargs | sed 's/g//i')
+  lv_size="$lv_size_raw"
+  recommended_calc=$(echo "$lv_size * 0.1" | bc 2>/dev/null | xargs printf "%.0f" 2>/dev/null)
+  recommended="${recommended_calc:-1}G"
+
+  echo -e "\nYou selected: $vg/$lv (${lv_size}G)"
+  echo "--------------------------------------"
+  echo "📦 Available space in Volume Groups:"
+  vgs --noheadings -o vg_name,vg_free --units g | column -t
+  echo -e "\n💡 Recommended snapshot size: $recommended (10% of original volume)"
+  echo "ℹ️  Snapshot tracks only changed blocks. Heavy write activity increases usage."
+}
+
+# Ask snapshot size
 ask_snapshot_size() {
-  read -rp "Enter snapshot size [default: 10G]: " SNAP_SIZE
-  SNAP_SIZE=${SNAP_SIZE:-10G}
+  read -rp "Enter snapshot size [default: $1]: " SNAP_SIZE
+  SNAP_SIZE=${SNAP_SIZE:-$1}
 }
 
 # === Menu ===
@@ -59,17 +80,16 @@ while true; do
   case "$choice" in
   1)
     select_volume
-
     LV_PATH="/dev/$SELECTED_VG/$SELECTED_LV"
     if [ ! -e "$LV_PATH" ]; then
       echo "❌ Volume $LV_PATH not found. Please check LVM state."
       continue
     fi
-
     check_merge_in_progress "$SELECTED_VG" "$SELECTED_LV"
-    ask_snapshot_size
+    display_snapshot_hints "$SELECTED_VG" "$SELECTED_LV"
+    ask_snapshot_size "$recommended"
     SNAP_NAME="snap_${SELECTED_LV}_$(date +%F_%H%M%S)"
-    if lvcreate -L"$SNAP_SIZE" -s -n "$SNAP_NAME" "/dev/$SELECTED_VG/$SELECTED_LV"; then
+    if lvcreate -L"$SNAP_SIZE" -s -n "$SNAP_NAME" "$LV_PATH"; then
       echo "✅ Snapshot $SNAP_NAME created."
     else
       echo "❌ Failed to create snapshot."
