@@ -4,7 +4,7 @@
 # Refactored Script: snapshot_manager.sh (Dynamic Multi-Volume Support)
 # --------------------------------------------------------------------
 
-# Résolution sécurisée du chemin du script
+# Securely resolve the script's path
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -13,11 +13,11 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
-# Inclusion de la bibliothèque utilitaire
+# Include the utility library
 # shellcheck source=../lib/utils.sh
 source "$SCRIPT_DIR/../lib/utils.sh"
 
-# Fonction pour lister les snapshots existants et les backups manuels
+# Function to list existing snapshots and manual backups
 list_snapshots() {
   echo -e "\n📦 Available Snapshots:"
   printf "%-30s %-18s %-10s %-8s %-10s\n" "Snapshot Name" "Origin Volume" "Size" "Used%" "Attributes"
@@ -47,25 +47,25 @@ list_snapshots() {
 }
 
 # -----------------------------------------------------------------------------
-# Fonction select_volume() mise à jour pour :
-# - Recharger dynamiquement la liste des volumes à chaque appel
-# - Exclure les volumes de type lvbackup_*
+# Updated select_volume() function to:
+# - Dynamically reload the list of volumes on each call
+# - Exclude volumes of type lvbackup_*
 # -----------------------------------------------------------------------------
 select_volume() {
-  # Recharger dynamiquement la liste des volumes
+  # Dynamically reload the list of volumes
   declare -A VOLUMES
   volume_list=$(lvs --noheadings --separator '|' -o vg_name,lv_name,origin)
   while IFS='|' read -r vg lv origin; do
     vg=$(echo "$vg" | xargs)
     lv=$(echo "$lv" | xargs)
     origin=$(echo "$origin" | xargs)
-    # Exclure les snapshots (ayant une origine) et les backups (lvbackup_*)
+    # Exclude snapshots (with an origin) and backups (lvbackup_*)
     [[ -n "$origin" ]] && continue
     [[ "$lv" == lvbackup_* ]] && continue
     VOLUMES["$vg"]+="$lv "
   done <<<"$volume_list"
 
-  # Affichage de la liste des volumes disponibles
+  # Display the available volumes list
   echo -e "\n📦 Available Volumes:"
   local i=1 choices=()
   for vg in "${!VOLUMES[@]}"; do
@@ -76,9 +76,9 @@ select_volume() {
     done
   done
 
-  # Vérifier qu'au moins un volume est disponible
+  # Verify that at least one volume is available
   if [ ${#choices[@]} -eq 0 ]; then
-    echo "❌ Aucun volume disponible pour créer un snapshot."
+    echo "❌ No available volume to create a snapshot."
     exit 1
   fi
 
@@ -88,7 +88,7 @@ select_volume() {
   SELECTED_LV=$(echo "$SELECTED_LV" | xargs)
 }
 
-# Affichage des indices pour la création d’un snapshot
+# Display snapshot creation hints
 display_snapshot_hints() {
   local vg="$1"
   local lv="$2"
@@ -121,7 +121,7 @@ ask_snapshot_size() {
   SNAP_SIZE=${SNAP_SIZE:-$1}
 }
 
-# === Menu principal ===
+# === Main Menu ===
 while true; do
   echo -e "\n=== LVM Snapshot Manager ==="
   echo "1) Create a snapshot"
@@ -143,7 +143,7 @@ while true; do
     check_merge_in_progress "$SELECTED_VG" "$SELECTED_LV"
     display_snapshot_hints "$SELECTED_VG" "$SELECTED_LV"
 
-    # Vérifier l'espace libre dans le VG source
+    # Check available free space in the source VG
     VG_FREE=$(vgs --noheadings -o vg_free --units g "$SELECTED_VG" | xargs | sed 's/g//i')
     VG_FREE_INT=$(printf "%.0f" "$VG_FREE")
     if [[ "$VG_FREE_INT" -le 0 ]]; then
@@ -164,12 +164,12 @@ while true; do
         read -rp "Enter backup size [default: ${lv_size}G]: " BACKUP_SIZE
         BACKUP_SIZE=${BACKUP_SIZE:-${lv_size}G}
 
-        # Ajout de l'unité G si manquant
+        # Add 'G' unit if missing
         if [[ ! "$BACKUP_SIZE" =~ [0-9]+G$ ]]; then
           BACKUP_SIZE="${BACKUP_SIZE}G"
         fi
 
-        # Validation de la taille du backup
+        # Validate backup size
         if [[ "$BACKUP_SIZE" < "$lv_size" ]]; then
           echo "❌ Backup size must be greater than or equal to the original volume size ($lv_size)."
           exit 1
@@ -237,16 +237,40 @@ while true; do
     list_snapshots "$SELECTED_VG" "$SELECTED_LV"
     echo ""
     read -rp "Enter the snapshot name to restore: " snap_to_restore
-    echo "⚠️  Restoring will overwrite $SELECTED_LV. Reboot required."
-    read -rp "Are you sure? (yes/no): " confirm
-    if [[ "$confirm" == "yes" ]]; then
-      if lvconvert --merge "/dev/$SELECTED_VG/$snap_to_restore"; then
-        echo "✅ Snapshot $snap_to_restore will be restored after reboot."
+
+    # If the entered name corresponds to a manual backup, perform a dd restore;
+    # otherwise, use lvconvert to merge the snapshot.
+    if [[ "$snap_to_restore" == lvbackup_* ]]; then
+      # Retrieve the VG for the manual backup
+      backup_vg=$(lvs --noheadings -o vg_name --select "lv_name=$snap_to_restore" | xargs)
+      if [[ -z "$backup_vg" ]]; then
+        echo "❌ Failed to determine VG for manual backup $snap_to_restore."
+        continue
+      fi
+      echo "⚠️  Restoring manual backup from /dev/$backup_vg/$snap_to_restore to /dev/$SELECTED_VG/$SELECTED_LV."
+      echo "This will completely overwrite /dev/$SELECTED_VG/$SELECTED_LV. A reboot might be required."
+      read -rp "Are you sure? (yes/no): " confirm_backup
+      if [[ "$confirm_backup" == "yes" ]]; then
+        if dd if="/dev/$backup_vg/$snap_to_restore" of="/dev/$SELECTED_VG/$SELECTED_LV" bs=4M status=progress; then
+          echo "✅ Manual backup restored successfully. A reboot might be required."
+        else
+          echo "❌ Manual restore failed."
+        fi
       else
-        echo "❌ Restore failed."
+        echo "❎ Cancelled."
       fi
     else
-      echo "❎ Cancelled."
+      echo "⚠️  Restoring will overwrite $SELECTED_LV. Reboot required."
+      read -rp "Are you sure? (yes/no): " confirm_snapshot
+      if [[ "$confirm_snapshot" == "yes" ]]; then
+        if lvconvert --merge "/dev/$SELECTED_VG/$snap_to_restore"; then
+          echo "✅ Snapshot $snap_to_restore will be restored after reboot."
+        else
+          echo "❌ Restore failed."
+        fi
+      else
+        echo "❎ Cancelled."
+      fi
     fi
     ;;
   5)
